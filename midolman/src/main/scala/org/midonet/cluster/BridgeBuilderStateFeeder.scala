@@ -61,10 +61,10 @@ class BridgeBuilderStateFeeder {
             override def run(): Unit = {
                 try {
                     map.put(mac, portId)
+                    log.info(s"Added $mac, VLAN $vlanId to port $portId for bridge $bridgeId")
                 } catch { case e: Throwable =>
                     log.error(s"Failed add $mac, VLAN $vlanId, port $portId", e)
                 }
-                log.info(s"Added $mac, VLAN $vlanId to port $portId for bridge $bridgeId")
             }
         }
 
@@ -72,6 +72,7 @@ class BridgeBuilderStateFeeder {
             override def run() {
                 try {
                     map.removeIfOwnerAndValue(mac, portId)
+                    log.info(s"Removed $mac, VLAN $vlanId from port $portId for bridge $bridgeId")
                 } catch { case e: Throwable =>
                     log.error(s"Failed remove $mac, VLAN $vlanId port " +
                               s"$portId on bridge $bridgeId", e)

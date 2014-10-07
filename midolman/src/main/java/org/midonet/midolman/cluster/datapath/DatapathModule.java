@@ -229,7 +229,7 @@ public class DatapathModule extends PrivateModule {
                     return new FlowProcessor(
                         injector.getInstance(DatapathState.class),
                         injector.getInstance(OvsNetlinkFamilies.class),
-                        config.datapath().globalIncomingBurstCapacity() * 2,
+                        config.datapath().globalIncomingBurstCapacity(),
                         512, // Flow request size
                         injector.getInstance(NetlinkChannelFactory.class),
                         SelectorProvider.provider(),
