@@ -182,7 +182,7 @@ public class DatapathModule extends PrivateModule {
                 public FlowProcessor get() {
                     return new FlowProcessor(
                         injector.getInstance(OvsNetlinkFamilies.class),
-                        config.datapath().globalIncomingBurstCapacity() * 2,
+                        config.datapath().globalIncomingBurstCapacity(),
                         512, // Flow request size
                         injector.getInstance(NetlinkChannelFactory.class),
                         NanoClock$.MODULE$.DEFAULT());
