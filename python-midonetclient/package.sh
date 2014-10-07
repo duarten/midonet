@@ -40,7 +40,6 @@ EOF
 
 function clean() {
     find . -name "*.pyc" -exec rm {} \;
-    rm -f doc/*.{gz,.1}
     rm -rf build
 }
 
@@ -50,11 +49,6 @@ function build_protobuf_modules() {
     protoc -I=../nsdb/src/main/proto/ --python_out=src/midonetclient/topology/_protobuf ../nsdb/src/main/proto/topology_api.proto
     protoc -I=../nsdb/src/main/proto/ --python_out=src/midonetclient/topology/_protobuf ../nsdb/src/main/proto/topology.proto
     touch src/midonetclient/topology/_protobuf/__init__.py
-}
-
-function build_man_pages() {
-    ronn --roff doc/*.ronn 2> /dev/null
-    gzip -f doc/*.1
 }
 
 function package_rpm() {
@@ -67,7 +61,6 @@ function package_rpm() {
     cp -r  src/midonetclient $RPM_BUILD_DIR/usr/lib/python2.6/site-packages/
     cp -r  src/midonetclient $RPM_BUILD_DIR/usr/lib/python2.7/site-packages/
     cp src/bin/midonet-cli $RPM_BUILD_DIR/usr/bin/
-    cp doc/*.gz $RPM_BUILD_DIR/usr/share/man/man1/
     RPM_ARGS="$RPM_ARGS -v $version"
     RPM_ARGS="$RPM_ARGS -C build/rpm"
     RPM_ARGS="$RPM_ARGS -d 'python >= 2.6' -d 'python < 2.8'"
@@ -84,7 +77,6 @@ function package_deb() {
 
     cp -r  src/midonetclient $DEB_BUILD_DIR/usr/lib/python2.7/dist-packages
     cp src/bin/midonet-cli $DEB_BUILD_DIR/usr/bin/
-    cp doc/*.gz $DEB_BUILD_DIR/usr/share/man/man1/
 
     DEB_ARGS="$DEB_ARGS -v $version"
     DEB_ARGS="$DEB_ARGS -C build/deb"
@@ -103,7 +95,6 @@ case "$1" in
       fi
       clean
       build_protobuf_modules
-      build_man_pages
       package_deb
       ;;
   rpm)
@@ -119,7 +110,6 @@ case "$1" in
       fi
       clean
       build_protobuf_modules
-      build_man_pages
       package_rpm
       ;;
   clean)

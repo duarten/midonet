@@ -68,3 +68,4 @@ PGDEV=/proc/net/pktgen/pgctrl
 echo "Running... ctrl^C to stop"
 pgset "start"
 echo "Done"
+
