@@ -183,15 +183,16 @@ class PacketWorkflow(protected val dpState: DatapathState,
             resultLogger.debug("packet came up due to userspace dp action, " +
                                s"match ${wildFlow.getMatch}")
             context.runFlowRemovedCallbacks()
+            addToActionsCacheAndInvalidate(context, wildFlow.getActions)
+            executePacket(context, wildFlow.getActions)
         } else {
             // ApplyState needs to happen before we add the wildcard flow
             // because it adds callbacks to the PacketContext and it can also
             // result in a NotYet exception being thrown.
             applyState(context, wildFlow.getActions)
+            executePacket(context, wildFlow.getActions)
             handleFlow(context, wildFlow)
         }
-
-        executePacket(context, wildFlow.getActions)
     }
 
     private def handleFlow(context: PacketContext, wildFlow: WildcardFlow): Unit = {
