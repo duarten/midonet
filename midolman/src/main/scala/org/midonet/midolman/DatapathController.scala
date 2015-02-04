@@ -101,6 +101,9 @@ trait VirtualPortsResolver {
     /** Returns bounded datapath port interface or None if port not found */
     def getDpPortName(num: JInteger): Option[String]
 
+    /** Returns interface desc bound to the interface or None if not found */
+    def getDescForInterface(itfName: String): Option[InterfaceDescription]
+
 }
 
 trait DatapathState extends VirtualPortsResolver with UnderlayResolver {
@@ -427,10 +430,9 @@ class DatapathController extends Actor with ActorLogWithoutPath {
                 log.warning("Unhandled message {}", m)
         })
 
-        Seq[ActorRef](FlowController, PacketsEntryPoint, RoutingManagerActor,
-                      initializer) foreach {
-            _ ! DatapathReady(datapath, dpState)
-        }
+        val datapathReadyMsg = DatapathReady(datapath, dpState)
+        system.eventStream.publish(datapathReadyMsg)
+        initializer ! datapathReadyMsg
 
         for ((zoneId, _) <- host.zones) {
             VirtualToPhysicalMapper ! TunnelZoneRequest(zoneId)
@@ -858,6 +860,8 @@ class VirtualPortManager(
 
     val interfaceEvent = new InterfaceEvent
 
+    var interfaceToDescription = Map[String, InterfaceDescription]()
+
     private def copy = new VirtualPortManager(controller,
                                               interfaceToStatus,
                                               interfaceToDpPort,
@@ -968,6 +972,7 @@ class VirtualPortManager(
         log.info("Found new interface {} which is {}", itf, if (isUp) "up" else "down")
         interfaceEvent.detect(itf.toString);
         interfaceToStatus += ((itf.getName, isUp))
+        interfaceToDescription += itf.toString -> itf
 
         // Is there a vport binding for this interface?
         if (!interfaceToVport.contains(itf.getName))
@@ -1029,6 +1034,7 @@ class VirtualPortManager(
             log.info("Deleting interface {}", name)
             interfaceEvent.delete(name)
             interfaceToStatus -= name
+            interfaceToDescription -= name
             // we don't have to remove the binding, the interface was deleted
             // but the binding is still valid
             interfaceToVport.get(name) foreach { vportId =>
@@ -1375,4 +1381,7 @@ class DatapathStateManager(val controller: VirtualPortManager.Controller)(
 
     override def getDpPortName(num: JInteger): Option[String] =
         _vportMgr.dpPortNumToInterface.get(num)
+
+    override def getDescForInterface(itf: String): Option[InterfaceDescription] =
+        _vportMgr.interfaceToDescription.get(itf)
 }
