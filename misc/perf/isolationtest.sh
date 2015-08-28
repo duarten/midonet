@@ -161,7 +161,7 @@ gather_build_info() {
     [ $? -eq 0 ] || err_exit "running git log"
 
     TSTAMP=`date +%Y%m%d-%H%M%S`
-    TEST_ID="$HOST-$TSTAMP-$ABBREV_GITREV"
+    TEST_ID="l2-1-1"
     REPORT_DIR="$BASEDIR/$TEST_ID"
     mkdir -p "$REPORT_DIR"
 }
@@ -282,8 +282,6 @@ start_service() {
 
 connectivity_check() {
     test_phase "Connectivity check"
-    ip netns exec $SOURCE_NETNS ping -c 5 $FLOOD_DEST_HOST || \
-        err_exit "No connectivity between namespaces"
     ip netns exec $SOURCE_NETNS ping -c 5 $VICTIM_DEST_HOST || \
         err_exit "No connectivity between namespaces"
 }
@@ -291,8 +289,8 @@ connectivity_check() {
 warm_up() {
     test_phase "Warming up midolman"
 
-    ip netns exec $SOURCE_NETNS $LOADGEN --start 0 $FLOOD_SOURCE_DEV \
-        $FLOOD_DEST_MAC 40000 2000
+    ip netns exec $SOURCE_NETNS $LOADGEN --start 0 $VICTIM_SOURCE_DEV \
+        $VICTIM_DEST_MAC 40000 2000
 
     sleep 5
 }
@@ -302,7 +300,9 @@ start_monitoring() {
 
     cashew_out="$(mktemp)" || exit 1
     trap "rm -rf $cashew_out" EXIT INT TERM HUP
-    ip netns exec $VICTIM_DEST_NETNS ./cashew.sh -t /dev/null -l /dev/null \
+    local throughput=$REPORT_DIR/$1.throughput.dat
+    local latency=$REPORT_DIR/$1.latency.hdr
+    ip netns exec $VICTIM_DEST_NETNS ./cashew.sh -t $throughput -l $latency \
         >$cashew_out 2>&1 &
     cashew_pid=$!
 
@@ -321,40 +321,27 @@ stop_monitoring() {
 }
 
 mac_learning() {
-    ip netns exec $FLOOD_DEST_NETNS ping -c 2 $FLOOD_SOURCE_HOST || \
-        err_exit "No connectivity between flood namespaces"
-
     ip netns exec $VICTIM_DEST_NETNS ping -c 2 $VICTIM_SOURCE_HOST || \
         err_exit "No connectivity between victim namespaces"
 }
 
 measure() {
-    local prefix=$1
-    local loss_dat="$REPORT_DIR/$prefix.loss.dat"
-    touch $loss_dat
-    printf "# load/pps \t loss\n" >> $loss_dat
     local percentiles=('50' '75' '90' '99' '99_9')
     for pl in "${percentiles[@]}"
     do
-        local dat="$REPORT_DIR/$prefix.$pl.dat"
+        local dat="$REPORT_DIR/$pl.dat"
         touch $dat 
         printf "# load/pps \t latency/us\n" >> $dat
     done
     
-    local pps=$BASE_PPS
-    while [ $pps -lt $TOP_PPS ]
+    local loads=(100 500 1000 5000 10000 15000 20000 25000 30000 35000 40000)
+    for pps in "${loads[@]}"
     do
         mac_learning
 
         echo "Sending $PACKETS_TO_SEND packets at $pps pps"
 
-        if [ "$1" == "flood" ] ; then
-            local to_send=$((DURATION_SECS * $FLOOD_PPS))
-            ip netns exec $SOURCE_NETNS $LOADGEN 1 $FLOOD_SOURCE_DEV \
-                $FLOOD_DEST_MAC $to_send $FLOOD_PPS
-        fi
-
-        start_monitoring
+        start_monitoring $pps
 
         local to_send=$((DURATION_SECS * pps))
         ip netns exec $SOURCE_NETNS $LOADGEN --start 0 $VICTIM_SOURCE_DEV \
@@ -362,15 +349,11 @@ measure() {
 
         stop_monitoring
 
-        local loss=`echo "(1 - ($TOTAL_PACKETS / $to_send)) * 100" | bc -l`
-        printf "$pps \t $loss\n" >> $loss_dat 
         for pl in "${percentiles[@]}"
         do
             local val=`eval printf '$LAT_'$pl`
-            printf "$pps \t $val\n" >> "$REPORT_DIR/$prefix.$pl.dat"
+            printf "$pps \t $val\n" >> "$REPORT_DIR/$pl.dat"
         done
-   
-        pps=$((pps + INCREMENT_PPS))
     done
  
     sleep 5
@@ -392,14 +375,6 @@ common_plot() {
 }
 
 plot() {
-    (
-        common_plot
-        echo "set ylabel 'loss/%'"
-        echo "set title 'Packet loss'"
-        echo "plot '$REPORT_DIR/baseline.loss.dat' ls 1 title ' baseline', \
-                   '$REPORT_DIR/flood.loss.dat' ls 2 title ' flood'"
-    ) | gnuplot > $REPORT_DIR/loss.svg
-
     local percentiles=('50' '75' '90' '99')
     for pl in "${percentiles[@]}"
     do
@@ -423,9 +398,6 @@ plot() {
 verify_isolation() {
     test_phase "Measuring baseline..."
     measure "baseline"
-
-    test_phase "Verifying isolation..."
-    measure "flood"
 
     test_phase "Plotting..."
     plot
