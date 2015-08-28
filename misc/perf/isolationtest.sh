@@ -37,7 +37,7 @@ LOADGEN=./loadgen.sh
 MIDOLMAN_PID=
 
 TSTAMP=
-TEST_ID=
+TEST_ID="l4-1-1"
 
 MIDONET_SRC_DIR=../..
 
@@ -54,14 +54,33 @@ FLOOD_SOURCE_MAC="aa:bb:cc:00:00:11"
 FLOOD_DEST_NET="172.16.1.2/24"
 FLOOD_DEST_MAC="aa:bb:cc:00:00:22"
 
-VICTIM_SOURCE_HOST="172.16.1.3"
-VICTIM_DEST_HOST="172.16.1.4"
 VICTIM_SOURCE_NET="172.16.1.3/24"
+VICTIM_SOURCE_HOST="172.16.1.3"
+VICTIM_SOURCE_RT="172.16.1.253"
 VICTIM_SOURCE_MAC="aa:bb:cc:00:00:33"
-VICTIM_DEST_NET="172.16.1.4/24"
+
+VICTIM_DEST_NET="172.16.2.4/24"
+VICTIM_DEST_HOST="172.16.2.4"
+#VICTIM_DEST_NET="172.16.1.4/24"
+#VICTIM_DEST_HOST="172.16.1.4"
+VICTIM_DEST_RT="172.16.2.254"
 VICTIM_DEST_MAC="aa:bb:cc:00:00:44"
 
-BR_ID=
+RT_MAC="aa:bb:cc:00:00:55"
+
+NAT_TARGET="172.0.16.1"
+
+TZONE_ID=
+BR_A_ID=
+BR_B_ID=
+LEFTPORT_A=
+RIGHTPORT_A=
+LEFTPORT_B=
+RIGHTPORT_B=
+LEFTPORT_RT=
+RIGHTPORT_RT=
+RT_ID=
+CHAIN_ID=
 HOST_ID=
 
 SOURCE_NETNS="source"
@@ -161,13 +180,11 @@ gather_build_info() {
     [ $? -eq 0 ] || err_exit "running git log"
 
     TSTAMP=`date +%Y%m%d-%H%M%S`
-    TEST_ID="$HOST-$TSTAMP-$ABBREV_GITREV"
     REPORT_DIR="$BASEDIR/$TEST_ID"
     mkdir -p "$REPORT_DIR"
 }
 
 build_report() {
-    cp isolation.html $REPORT_DIR/isolation.html
     pushd $REPORT_DIR/..
     tar czf $TEST_ID.tar.gz $TEST_ID
     rm -rf $REPORT_DIR
@@ -192,7 +209,6 @@ install_config_file() {
 stop_midolman() {
     dpkg -s midolman > /dev/null 2>&1 || return 1
     status midolman | grep stop/waiting >/dev/null || stop midolman
-    status midolman | grep stop/waiting >/dev/null || err_exit "stopping midolman"
 }
 
 find_deb() {
@@ -282,8 +298,6 @@ start_service() {
 
 connectivity_check() {
     test_phase "Connectivity check"
-    ip netns exec $SOURCE_NETNS ping -c 5 $FLOOD_DEST_HOST || \
-        err_exit "No connectivity between namespaces"
     ip netns exec $SOURCE_NETNS ping -c 5 $VICTIM_DEST_HOST || \
         err_exit "No connectivity between namespaces"
 }
@@ -291,8 +305,8 @@ connectivity_check() {
 warm_up() {
     test_phase "Warming up midolman"
 
-    ip netns exec $SOURCE_NETNS $LOADGEN --start 0 $FLOOD_SOURCE_DEV \
-        $FLOOD_DEST_MAC 40000 2000
+    ip netns exec $SOURCE_NETNS $LOADGEN --start 0 $VICTIM_SOURCE_DEV \
+        $RT_MAC $VICTIM_DEST_HOST 50000 2000
 
     sleep 5
 }
@@ -302,7 +316,9 @@ start_monitoring() {
 
     cashew_out="$(mktemp)" || exit 1
     trap "rm -rf $cashew_out" EXIT INT TERM HUP
-    ip netns exec $VICTIM_DEST_NETNS ./cashew.sh -t /dev/null -l /dev/null \
+    local throughput=$REPORT_DIR/$1.throughput.dat
+    local latency=$REPORT_DIR/$1.latency.hdr
+    ip netns exec $VICTIM_DEST_NETNS ./cashew.sh -t $throughput -l $latency \
         >$cashew_out 2>&1 &
     cashew_pid=$!
 
@@ -321,56 +337,44 @@ stop_monitoring() {
 }
 
 mac_learning() {
-    ip netns exec $FLOOD_DEST_NETNS ping -c 2 $FLOOD_SOURCE_HOST || \
-        err_exit "No connectivity between flood namespaces"
-
     ip netns exec $VICTIM_DEST_NETNS ping -c 2 $VICTIM_SOURCE_HOST || \
         err_exit "No connectivity between victim namespaces"
 }
 
 measure() {
-    local prefix=$1
-    local loss_dat="$REPORT_DIR/$prefix.loss.dat"
-    touch $loss_dat
-    printf "# load/pps \t loss\n" >> $loss_dat
     local percentiles=('50' '75' '90' '99' '99_9')
     for pl in "${percentiles[@]}"
     do
-        local dat="$REPORT_DIR/$prefix.$pl.dat"
+        local dat="$REPORT_DIR/$pl.dat"
         touch $dat 
         printf "# load/pps \t latency/us\n" >> $dat
     done
     
-    local pps=$BASE_PPS
-    while [ $pps -lt $TOP_PPS ]
+    local res="$REPORT_DIR/table"
+    touch res
+
+    local loads=(5000 10000 15000 20000 25000 30000 35000 40000)
+    for pps in "${loads[@]}"
     do
         mac_learning
 
         echo "Sending $PACKETS_TO_SEND packets at $pps pps"
 
-        if [ "$1" == "flood" ] ; then
-            local to_send=$((DURATION_SECS * $FLOOD_PPS))
-            ip netns exec $SOURCE_NETNS $LOADGEN 1 $FLOOD_SOURCE_DEV \
-                $FLOOD_DEST_MAC $to_send $FLOOD_PPS
-        fi
-
-        start_monitoring
+        start_monitoring $pps
 
         local to_send=$((DURATION_SECS * pps))
         ip netns exec $SOURCE_NETNS $LOADGEN --start 0 $VICTIM_SOURCE_DEV \
-            $VICTIM_DEST_MAC $to_send $pps
+            $RT_MAC $VICTIM_DEST_HOST $to_send $pps
 
         stop_monitoring
 
-        local loss=`echo "(1 - ($TOTAL_PACKETS / $to_send)) * 100" | bc -l`
-        printf "$pps \t $loss\n" >> $loss_dat 
+        printf "$MEDIAN_PPS \t $MAX_PPS \t $LAT_50 \t $LAT_75 \t $LAT_90 \t $LAT_99 \t $LAT_99_9 \n" >> $res
+
         for pl in "${percentiles[@]}"
         do
             local val=`eval printf '$LAT_'$pl`
-            printf "$pps \t $val\n" >> "$REPORT_DIR/$prefix.$pl.dat"
+            printf "$pps \t $val\n" >> "$REPORT_DIR/$pl.dat"
         done
-   
-        pps=$((pps + INCREMENT_PPS))
     done
  
     sleep 5
@@ -392,40 +396,51 @@ common_plot() {
 }
 
 plot() {
-    (
-        common_plot
-        echo "set ylabel 'loss/%'"
-        echo "set title 'Packet loss'"
-        echo "plot '$REPORT_DIR/baseline.loss.dat' ls 1 title ' baseline', \
-                   '$REPORT_DIR/flood.loss.dat' ls 2 title ' flood'"
-    ) | gnuplot > $REPORT_DIR/loss.svg
-
-    local percentiles=('50' '75' '90' '99')
-    for pl in "${percentiles[@]}"
-    do
-        (   
-            common_plot
-            echo "set ylabel 'latency/us'"
-            echo "set title 'Latency $pl%ile'"
-            echo "plot '$REPORT_DIR/baseline.$pl.dat' ls 1 title ' baseline', \
-                       '$REPORT_DIR/flood.$pl.dat' ls 2 title ' flood'"
-        ) | gnuplot > "$REPORT_DIR/lat_${pl}.svg"
-    done
-    (
+    (   
         common_plot
         echo "set ylabel 'latency/us'"
-        echo "set title 'Latency 99.9%ile'"
-        echo "plot '$REPORT_DIR/baseline.99_9.dat' ls 1 title ' baseline', \
-                   '$REPORT_DIR/flood.99_9.dat' ls 2 title ' flood'"
-    ) | gnuplot > $REPORT_DIR/lat_99_9.svg
+        echo "set title 'Latency/Load'"
+        echo "plot '$REPORT_DIR/50.dat' ls 1 lc rgb '#0060AD' title ' 50%ile', \
+                   '$REPORT_DIR/75.dat' ls 1 lc rgb '#AC2929' title ' 75%ile', \
+                   '$REPORT_DIR/90.dat' ls 1 lc rgb '#C7C736' title ' 90%ile', \
+                   '$REPORT_DIR/99.dat' ls 1 lc rgb '#2676C6' title ' 99%ile', \
+                   '$REPORT_DIR/99_9.dat' ls 1 lc rgb '#4E257D' title ' 99.9%ile'"
+    ) | gnuplot > "$REPORT_DIR/result.svg"
+
+    local loads=(5000 10000 15000 20000 25000 30000 35000 40000)
+    for pps in "${loads[@]}"
+    do
+        (
+            echo "set terminal svg fname 'Gill Sans' fsize 9 rounded dashed"
+
+            echo "set title '$pps packets per second'"
+            echo "set ylabel 'kpps'"
+            echo "set xlabel 'seconds'"
+            echo "set key outside bottom right"
+
+            echo "set style line 11 lc rgb '#808080' lt 1"
+            echo "set border 3 back ls 11"
+            echo "set tics nomirror"
+
+            echo "set style line 12 lc rgb '#808080' lt 0 lw 1"
+            echo "set grid back ls 12"
+
+            echo "set autoscale xy"
+            echo "set style line 1 lc rgb '#0060ad' lt 1 lw 2 pt 7 ps 1.5"
+            echo "set style data linespoints"
+
+            echo "stats '$REPORT_DIR/$pps.throughput.dat' index 0 using (\$2/1000) prefix 'P'"
+
+            echo "plot P_max lt -3 title gprintf(' Max: %g', P_max) , \
+                       P_median title gprintf(' Median: %g', P_median), \
+                       '$REPORT_DIR/$pps.throughput.dat' using 1:(\$2/1000) ls 1 title ' data'"
+        ) | gnuplot > "$REPORT_DIR/${pps}_pps.svg"
+    done
 }
 
 verify_isolation() {
     test_phase "Measuring baseline..."
     measure "baseline"
-
-    test_phase "Verifying isolation..."
-    measure "flood"
 
     test_phase "Plotting..."
     plot
@@ -482,21 +497,6 @@ cleanup_if() {
 # Test scenario setup and tear down functions
 #######################################################################
 
-print_topology() {
-    echo "Virtual topology"
-    echo "----------------"
-    echo "    port bindings for host $HOST_ID:"
-    midonet-cli -A -e host $HOST_ID list binding
-    echo ""
-    echo "    bridge listing:"
-    midonet-cli -A -e bridge list
-    if [ ! -z "$BR_ID" ] ; then
-        echo ""
-        echo "    bridge $BR_ID port listing:"
-        midonet-cli -A -e bridge $BR_ID port list
-    fi
-}
-
 setup_topology() {
     test_phase "Setting up virtual topology"
 
@@ -515,79 +515,114 @@ setup_topology() {
     midonet-cli -A -e tunnel-zone $TZONE_ID \
         add member host $HOST_ID address 10.0.2.15
 
-    echo "creating bridge"
-    BR_ID=`midonet-cli -A -e bridge create name perftest-bridge`
+    #BR_ID=`midonet-cli -A -e bridge create name perftest-bridge`
+    #CHAIN_ID=`midonet-cli -A -e chain create name perftest-chain`
+    #midonet-cli -A -e chain $CHAIN_ID add rule src-port 0-65535 \
+    #    dst-port 0-65535 type accept
+    #midonet-cli -A -e bridge $BR_ID set infilter $CHAIN_ID
+    #LEFTPORT=`midonet-cli -A -e bridge $BR_ID create port`
+    #RIGHTPORT=`midonet-cli -A -e bridge $BR_ID create port`
 
-    CHAIN_ID=`midonet-cli -A -e chain create name perftest-chain`
-    midonet-cli -A -e chain $CHAIN_ID add rule src-port 0-65535 \
-        dst-port 0-65535 type accept
-    midonet-cli -A -e bridge $BR_ID set infilter $CHAIN_ID
+    #echo "creating bridges"
+    BR_A_ID=`midonet-cli -A -e bridge create name perftest-bridgea`
+    BR_B_ID=`midonet-cli -A -e bridge create name perftest-bridgeb`
+    #echo "creating router"
+    RT_ID=`midonet-cli -A -e router create name perftest-router`
 
-    echo "creating ports"
-    FLOODSOURCEPORT=`midonet-cli -A -e bridge $BR_ID create port`
-    FLOODDESTPORT=`midonet-cli -A -e bridge $BR_ID create port`
-    VICTIMSOURCEPORT=`midonet-cli -A -e bridge $BR_ID create port`
-    VICTIMDESTPORT=`midonet-cli -A -e bridge $BR_ID create port`
+    #CHAIN_ID=`midonet-cli -A -e chain create name perftest-chain`
+    #midonet-cli -A -e chain $CHAIN_ID add rule src-port 0-65535 \
+     #   dst-port 0-65535 type accept
+    #midonet-cli -A -e router $RT_ID set infilter $CHAIN_ID
+
+    CHAIN_ID=`midonet-cli -A -e chain add name perf-nat`
+    midonet-cli -A -e chain $CHAIN_ID add rule src-port 0-65535 dst-port 0-65535 \
+        src $VICTIM_SOURCE_HOST type snat target $NAT_TARGET:1024-65535 action accept
+    midonet-cli -A -e router $RT_ID set outfilter chain $CHAIN_ID
+
+    REV_CHAIN_ID=`midonet-cli -A -e chain add name perf-rev-nat`
+    midonet-cli -A -e chain $REV_CHAIN_ID add rule type rev_snat action continue
+    midonet-cli -A -e router $RT_ID set infilter chain $REV_CHAIN_ID
+
+    #echo "creating ports in bridge A"
+    LEFTPORT_A=`midonet-cli -A -e bridge $BR_A_ID create port`
+    RIGHTPORT_A=`midonet-cli -A -e bridge $BR_A_ID create port`
+
+    #echo "creating ports in bridge B"
+    LEFTPORT_B=`midonet-cli -A -e bridge $BR_B_ID create port`
+    RIGHTPORT_B=`midonet-cli -A -e bridge $BR_B_ID create port`
+
+    #echo "creating ports in router"
+    LEFTPORT_RT=`midonet-cli -A -e router $RT_ID create port address $VICTIM_SOURCE_RT net $VICTIM_SOURCE_NET mac $RT_MAC`
+    RIGHTPORT_RT=`midonet-cli -A -e router $RT_ID create port address $VICTIM_DEST_RT net $VICTIM_DEST_NET`
 
     echo "creating bindings"
     midonet-cli -A -e host $HOST_ID add binding \
-        interface $FLOOD_SOURCE_BINDING\
-        port bridge $BR_ID port $FLOODSOURCEPORT > /dev/null
+            interface $VICTIM_SOURCE_BINDING \
+                port bridge $BR_A_ID port $LEFTPORT_A > /dev/null
     midonet-cli -A -e host $HOST_ID add binding \
-        interface $FLOOD_DEST_BINDING \
-        port bridge $BR_ID port $FLOODDESTPORT > /dev/null
-    midonet-cli -A -e host $HOST_ID add binding \
-        interface $VICTIM_SOURCE_BINDING\
-        port bridge $BR_ID port $VICTIMSOURCEPORT > /dev/null
-    midonet-cli -A -e host $HOST_ID add binding \
-        interface $VICTIM_DEST_BINDING \
-        port bridge $BR_ID port $VICTIMDESTPORT > /dev/null
+            interface $VICTIM_DEST_BINDING \
+                port bridge $BR_B_ID port $RIGHTPORT_B > /dev/null
 
-    echo "flood source port: $FLOODSOURCEPORT"
-    echo "flood dest port: $FLOODDESTPORT"
-    echo "victim source port: $VICTIMSOURCEPORT"
-    echo "victim dest port: $VICTIMDESTPORT"
-    echo "bridge: $BR_ID"
-    echo "chain: $CHAIN_ID"
-    echo "host: $HOST_ID"
+    #midonet-cli -A -e host $HOST_ID add binding \
+    #        interface $VICTIM_SOURCE_BINDING port $LEFTPORT
+    #midonet-cli -A -e host $HOST_ID add binding \
+    #        interface $VICTIM_DEST_BINDING port $RIGHTPORT
 
-    print_topology
+    # and bind the devices together
+    midonet-cli -A -e bridge $BR_A_ID port $RIGHTPORT_A set peer router $RT_ID port $LEFTPORT_RT
+    midonet-cli -A -e bridge $BR_B_ID port $LEFTPORT_B set peer router $RT_ID port $RIGHTPORT_RT
+
+#    for LEN in {0..32}
+#    do
+#        NET=$VICTIM_DEST_HOST/$LEN
+#        midonet-cli -A -e router $RT_ID route add src 0.0.0.0/0 dst $NET port router $RT_ID port $RIGHTPORT_RT type normal weight 100
+#    done
+
+#    for LEN in {0..32}
+#    do
+#        NET=$VICTIM_SOURCE_HOST/$LEN
+#        midonet-cli -A -e router $RT_ID route add src 0.0.0.0/0 dst $NET port router $RT_ID port $LEFTPORT_RT type normal weight 100
+#    done
+
+    midonet-cli -A -e router $RT_ID route add src 0.0.0.0/0 dst $VICTIM_DEST_HOST port router $RT_ID port $RIGHTPORT_RT type normal weight 100
+    midonet-cli -A -e router $RT_ID route add src 0.0.0.0/0 dst $VICTIM_SOURCE_HOST port router $RT_ID port $LEFTPORT_RT type normal weight 100
+
+    #echo "source port in bridge A $LEFTPORT_A"
+    #echo "-> right port in bridge A: $RIGHTPORT_A"
+    #echo "-> left port in router: $LEFTPORT_RT"
+    #echo "-> right port in router: $RIGHTPORT_RT"
+    #echo "-> left port in bridge B: $LEFTPORT_B"
+    #echo "destination port $RIGHTPORT_B"
+    #echo "bridge A: $BR_A_ID"
+    #echo "bridge B: $BR_B_ID"
+    #echo "router: $RT_ID"
+    #echo "chain: $CHAIN_ID"
+    #echo "host: $HOST_ID"
+
+    ip netns exec $SOURCE_NETNS ip route add default via $VICTIM_SOURCE_RT
+    ip netns exec $VICTIM_DEST_NETNS ip route add default via $VICTIM_DEST_RT
 }
 
 tear_down_topology() {
-    if [ -z "$BR_ID" ] ; then
-        return
-    fi
     test_phase "Tearing down virtual topology"
-    midonet-cli -A -e host $HOST_ID delete binding interface $FLOOD_SOURCE_BINDING
-    midonet-cli -A -e host $HOST_ID delete binding interface $FLOOD_DEST_BINDING
     midonet-cli -A -e host $HOST_ID delete binding interface $VICTIM_SOURCE_BINDING
     midonet-cli -A -e host $HOST_ID delete binding interface $VICTIM_DEST_BINDING
     midonet-cli -A -e delete tunnel-zone $TZONE_ID
-    midonet-cli -A -e bridge $BR_ID delete port $FLOODSOURCEPORT
-    midonet-cli -A -e bridge $BR_ID delete port $FLOODDESTPORT
-    midonet-cli -A -e bridge $BR_ID delete port $VICTIMSOURCEPORT
-    midonet-cli -A -e bridge $BR_ID delete port $VICTIMDESTPORT
-    midonet-cli -A -e bridge $BR_ID delete
-    midonet-cli -A -e chain $CHAIN_ID delete
-    BR_ID=
-    CHAIN_ID=
-    FLOODSOURCEPORT=
-    FLOODDESTPORT=
-    VICTIMSOURCEPORT=
-    VICTIMDESTPORT=
-
-    print_topology
+    devs=('chain' 'port' 'router' 'bridge')
+    for dev in "${devs[@]}"
+    do
+        ids=`midonet-cli -A -e list $dev | cut -d ' ' -f 2`
+        for id in $ids
+        do
+            `midonet-cli -A -e delete $dev $id`
+        done
+    done
 }
-
 
 create_scenario() {
     test_phase "Creating test scenario"
     ip netns add $SOURCE_NETNS || return 1
     ip netns add $VICTIM_DEST_NETNS || return 1
-    ip netns add $FLOOD_DEST_NETNS || return 1
-    add_if "flood-source" $SOURCE_NETNS $FLOOD_SOURCE_MAC $FLOOD_SOURCE_NET
-    add_if "flood-dest" $FLOOD_DEST_NETNS $FLOOD_DEST_MAC $FLOOD_DEST_NET
     add_if "victim-source" $SOURCE_NETNS $VICTIM_SOURCE_MAC $VICTIM_SOURCE_NET
     add_if "victim-dest" $VICTIM_DEST_NETNS $VICTIM_DEST_MAC $VICTIM_DEST_NET
     setup_topology
@@ -596,12 +631,9 @@ create_scenario() {
 destroy_scenario() {
     test_phase "Destroying test scenario"
     tear_down_topology
-    cleanup_if "flood-source" $SOURCE_NETNS
-    cleanup_if "flood-dest" $FLOOD_DEST_NETNS
     cleanup_if "victim-source" $SOURCE_NETNS
     cleanup_if "victim-dest" $VICTIM_DEST_NETNS
     ip netns delete $SOURCE_NETNS
-    ip netns delete $FLOOD_DEST_NETNS
     ip netns delete $VICTIM_DEST_NETNS
 }
 

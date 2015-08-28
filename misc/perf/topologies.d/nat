@@ -125,7 +125,7 @@ setup_topology() {
     midonet-cli -A -e router $RT_ID set outfilter chain $SNAT_CHAIN
 
     REV_SNAT_CHAIN=`midonet-cli -A -e chain add name perf-rev-snat`
-    REV_SNAT_RULE=`midonet-cli -A -e chain $REV_SNAT_CHAIN add rule pos 1 type rev_snat action continue`:w
+    REV_SNAT_RULE=`midonet-cli -A -e chain $REV_SNAT_CHAIN add rule pos 1 type rev_snat action continue`
     midonet-cli -A -e router $RT_ID set infilter chain $REV_SNAT_CHAIN
 
     echo "source port in bridge A $LEFTPORT_A"

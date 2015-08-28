@@ -179,7 +179,7 @@ public abstract class Rule extends BaseConfig {
             if (meter != null)
                 pktCtx.addFlowTag(meter);
             apply(pktCtx, res, ownerId);
-        }
+        } else pktCtx.jlog().debug("Condition didn't match");
     }
 
     public Condition getCondition() {

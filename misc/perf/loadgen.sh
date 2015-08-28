@@ -24,8 +24,9 @@ fi
 ID=$1 # a number between 0 and 7
 DEV=$2
 DST_MAC=$3
-COUNT=$4
-PPS=$5
+DST_IP=$4
+COUNT=$5
+PPS=$6
 
 # Thread config (per CPU)
 
@@ -48,18 +49,14 @@ pgset "clone_skb 0"
 pgset "pkt_size 60"
 # Rate at which to send
 pgset "ratep $PPS"
-# Random address with in the min-max range
-pgset "flag IPDST_RND"
-pgset "dst_min 10.0.0.0"
-pgset "dst_max 10.255.255.255"
+pgset "dst_mac $DST_MAC"
+pgset "dst $DST_IP"
 pgset "flag UDPSRC_RND"
 pgset "udp_src_min 0"
 pgset "udp_src_max 65534"
 pgset "flag UDPDST_RND"
 pgset "udp_dst_min 0"
 pgset "udp_dst_max 65534"
-
-pgset "dst_mac $DST_MAC"
 
 if [ "$START" == "yes" ] ; then
     PGDEV=/proc/net/pktgen/pgctrl

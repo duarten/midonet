@@ -16,6 +16,8 @@
 # Midolman configuration file
 
 mn-conf set -t default <<EOF
+agent.midolman.simulation_threads=1
+agent.midolman.output_channels=1
 agent.bridge.mac_port_mapping_expire=90s
 agent.datapath.global_incoming_burst_capacity=128
 agent.datapath.tunnel_incoming_burst_capacity=64

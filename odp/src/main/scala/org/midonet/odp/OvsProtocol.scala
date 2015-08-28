@@ -56,6 +56,7 @@ sealed class OvsProtocol(pid: Int,
         if (name ne null) {
             NetlinkMessage.writeStringAttr(buf, Attr.Name, name)
         }
+        NetlinkMessage.writeIntAttr(buf, 5.toShort, 1.toShort)
         message.finalize(pid)
     }
 
@@ -71,6 +72,7 @@ sealed class OvsProtocol(pid: Int,
         if (name ne null) {
             NetlinkMessage.writeStringAttr(buf, Attr.Name, name)
         }
+        NetlinkMessage.writeIntAttr(buf, 5.toShort, 1.toShort)
         message.finalize(pid)
     }
 

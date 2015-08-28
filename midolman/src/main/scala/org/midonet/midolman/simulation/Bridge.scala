@@ -415,12 +415,14 @@ class Bridge(val id: UUID,
         context.log.debug("Handling ARP multicast")
         val pMatch = context.wcmatch
         val nwDst = pMatch.getNetworkDstIP
+        context.log.debug(ipToMac.toString)
         if (ipToMac.contains(nwDst)) {
             // Forward broadcast ARPs to their devices if we know how.
             context.log.debug("The packet is intended for an interior port.")
             val portID = macToLogicalPortId.get(ipToMac.get(nwDst).get).get
             unicastAction(portID)
         } else {
+            context.log.debug(ip4MacMap.toString)
             // If it's an ARP request, can we answer from the Bridge's IpMacMap?
             val mac = pMatch.getNetworkProto.shortValue() match {
                 case ARP.OP_REQUEST if ip4MacMap != null =>

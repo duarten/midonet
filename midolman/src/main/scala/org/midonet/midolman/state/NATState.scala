@@ -246,12 +246,20 @@ trait NatState extends FlowState { this: PacketContext =>
     }
 
     def reverseSnat(deviceId: UUID): Boolean = {
+        log.debug("Reversing SNAT")
         if (isNatSupported) {
             val natKey = NatKey(wcmatch, deviceId: UUID, REV_SNAT)
+            log.debug(s"Trying to loopkup $natKey")
             addFlowTag(natKey)
             val binding = natTx.get(natKey)
-            if (binding ne null)
+            if (binding ne null) {
+                log.debug("Reversing SNAT")
                 return reverseSnatTransformation(natKey, binding)
+            } else {
+                log.debug("No key to reverse SNAT found")
+            }
+        } else {
+          log.debug("SNAT not supported")
         }
         false
     }
