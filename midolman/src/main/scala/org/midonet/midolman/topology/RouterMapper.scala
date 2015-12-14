@@ -66,7 +66,10 @@ object RouterMapper {
      * when the port is deleted, or when calling the complete() method, which is
      * used to signal that the port is no longer used by the router.
      */
-    private class PortState(val portId: UUID, vt: VirtualTopology, log: Logger) {
+    private class PortState(portId: UUID,
+                            vniMap: mutable.HashMap[Int, UUID],
+                            vt: VirtualTopology,
+                            log: Logger) {
 
         private var currentPort: RouterPort = null
         private val mark = PublishSubject.create[RouteUpdates]
@@ -122,6 +125,8 @@ object RouterMapper {
           * each port route state. The method returns a route update that
           * removes all routes previously published by the port. */
         def complete(): RouteUpdates = {
+            if ((currentPort ne null) && currentPort.isL2)
+                vniMap.remove(currentPort.vni)
             routes.foreach(_._2.complete())
             routesSubject.onCompleted()
             mark.onCompleted()
@@ -148,6 +153,9 @@ object RouterMapper {
             vt.assertThread()
 
             log.debug("Router port updated: {}", port)
+
+            if (port.isL2)
+                vniMap.update(port.vni, port.id)
 
             val oldPublish = isPublishingRoutes
             val newPublish = port.isInterior || port.isExterior &&
@@ -391,6 +399,7 @@ final class RouterMapper(routerId: UUID, vt: VirtualTopology,
     private val localRoutes = new mutable.HashMap[UUID, RouteState]
     private var arpCache: ArpCache = null
     private var traceChain: Option[UUID] = None
+    private val vniToPort = new mutable.HashMap[Int, UUID]
 
     // Provides an implementation of the tag manager for the current router
     private val tagManager = new TagManager {
@@ -565,7 +574,7 @@ final class RouterMapper(routerId: UUID, vt: VirtualTopology,
         // on the ports observable.
         val addedPorts = new mutable.MutableList[PortState]
         for (portId <- portIds if !ports.contains(portId)) {
-            val portState = new PortState(portId, vt, log)
+            val portState = new PortState(portId, vniToPort, vt, log)
             ports += portId -> portState
             addedPorts += portState
         }
@@ -578,7 +587,7 @@ final class RouterMapper(routerId: UUID, vt: VirtualTopology,
                                 .asScala.map(_.asJava).toList)
 
         // Request the chains for this router.
-        chainsTracker.requestRefs((infilters.asScala ++ outfilters.asScala) :_*)
+        chainsTracker.requestRefs(infilters.asScala ++ outfilters.asScala :_*)
 
         // Request the mirrors for this router.
         mirrorsTracker.requestRefs(router.getInboundMirrorIdsList.asScala map (_.asJava) :_*)
@@ -695,6 +704,7 @@ final class RouterMapper(routerId: UUID, vt: VirtualTopology,
             config2,
             new RouterRoutingTable(routes),
             tagManager,
+            vniToPort.asJava,
             arpCache)
         log.debug("Build router: {} {}", device, routes)
 

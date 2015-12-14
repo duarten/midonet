@@ -100,7 +100,8 @@ object Port {
             if (p.hasPortMac) MAC.fromString(p.getPortMac) else null,
             p.getRouteIdsList,
             p.getInboundMirrorIdsList,
-            p.getOutboundMirrorIdsList)
+            p.getOutboundMirrorIdsList,
+            if (p.hasVni) p.getVni else 0)
 
     private def vxLanPort(p: Topology.Port,
                           infilters: JList[UUID],
@@ -388,10 +389,13 @@ case class RouterPort(override val id: UUID,
                       routeIds: Set[UUID] = Set.empty,
                       override val inboundMirrors: JList[UUID] = NO_MIRRORS,
                       override val outboundMirrors: JList[UUID] = NO_MIRRORS,
-                      val peeringTable: StateTable[IPv4Addr, MAC] = Port.EMPTY_PEERING_TABLE)
+                      vni: Int = 0,
+                      peeringTable: StateTable[IPv4Addr, MAC] = Port.EMPTY_PEERING_TABLE)
     extends Port {
 
     override val servicePorts: JList[UUID] = new JArrayList(0)
+
+    def isL2 = vni != 0
 
     protected def device = tryGet[Router](routerId)
 
